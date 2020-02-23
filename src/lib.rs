@@ -2,35 +2,15 @@ mod errors;
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::bytes::complete::take_while1;
-use nom::character::complete::{line_ending, multispace0, not_line_ending, space0, space1};
-use nom::multi::{many0, many1};
-use nom::sequence::{preceded, separated_pair, terminated};
+use nom::character::complete::{line_ending, multispace0, space0, space1};
+use nom::multi::many0;
+use nom::sequence::{preceded, terminated};
 use nom::IResult;
 
 use errors::*;
 
-pub fn from<'a>(input: &str) -> IResult<&str, (&str, &str)> {
-    instruction("FROM")(input)
-}
-
-pub fn instruction<'a>(ins: &'a str) -> impl Fn(&'a str) -> IResult<&str, (&str, &str)> {
-    move |input| {
-        terminated(
-            separated_pair(terminated(tag(ins), space0), space1, not_line_ending),
-            line_ending,
-        )(input)
-    }
-}
-
 pub fn instruction_name<'a>(ins: &'a str) -> impl Fn(&'a str) -> IResult<&str, &str> {
     move |input| preceded(space0, terminated(tag(ins), space1))(input)
-}
-
-pub fn backslash(input: &str) -> IResult<&str, &str> {
-    preceded(
-        space0,
-        terminated(terminated(tag("\\"), space0), line_ending),
-    )(input)
 }
 
 pub fn instruction_argument(input: &str) -> IResult<&str, String, DockerParseError> {
@@ -53,10 +33,11 @@ fn not_backslash_or_newline(input: &str) -> IResult<&str, &str> {
     take_while1(chars)(input)
 }
 
-pub fn tokenize(dockerfile: &str) -> IResult<&str, Vec<(&str, &str)>> {
-    let p = alt((instruction("FROM"), instruction("RUN"), instruction("COPY")));
-    let parsed = many1(p)(dockerfile)?;
-    Ok(parsed)
+fn backslash(input: &str) -> IResult<&str, &str> {
+    preceded(
+        space0,
+        terminated(terminated(tag("\\"), space0), line_ending),
+    )(input)
 }
 
 #[cfg(test)]
