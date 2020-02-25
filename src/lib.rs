@@ -24,20 +24,26 @@ macro_rules! instructions_enum {
         }
 
         impl Instruction {
-            pub fn from_str(string: &str) -> Option<Self> {
-                match string {
-                    stringify!($first) => Some(Self::$first),
-                    $( stringify!($name) => Some(Self::$name) )*,
-                    _ => None,
-                }
-            }
-
             pub fn as_str(&self) -> &'static str {
                 match self {
                     Instruction::$first => stringify!($first),
                     $( Instruction::$name => stringify!($name) )*,
                 }
             }
+        }
+
+        fn known_instructions() -> impl Fn(Span) -> IResult<Span, &str, DockerParseError> {
+            fn parser(span: Span) -> IResult<Span, &str, DockerParseError> {
+                let (next_span, token) = context(
+                    &UNSUPPORTED_INSTRUCTION_ERROR,
+                    alt((
+                        tag(Instruction::$first.as_str()),
+                        $( tag(Instruction::$name.as_str()), )*
+                    )),
+                )(span)?;
+                Ok((next_span, token.fragment()))
+            }
+            move |span| parser(span)
         }
 
         static UNSUPPORTED_INSTRUCTION_ERROR: &str =
@@ -47,23 +53,9 @@ macro_rules! instructions_enum {
 
 instructions_enum!(FROM, RUN);
 
-pub fn instruction_name<'a>(span: Span) -> IResult<Span, &str, DockerParseError> {
+pub fn instruction_name(span: Span) -> IResult<Span, &str, DockerParseError> {
     let proceeding_space = context(NO_SPACE_AFTER_INSTRUCTION_ERROR, space1);
     terminated(preceded(space0, known_instructions()), proceeding_space)(span)
-}
-
-fn known_instructions() -> impl Fn(Span) -> IResult<Span, &str, DockerParseError> {
-    fn parser(span: Span) -> IResult<Span, &str, DockerParseError> {
-        let (next_span, token) = context(
-            &UNSUPPORTED_INSTRUCTION_ERROR,
-            alt((
-                tag(Instruction::FROM.as_str()),
-                tag(Instruction::RUN.as_str()),
-            )),
-        )(span)?;
-        Ok((next_span, token.fragment()))
-    }
-    move |span| parser(span)
 }
 
 #[cfg(test)]

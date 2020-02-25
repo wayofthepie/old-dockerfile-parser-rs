@@ -1,0 +1,23 @@
+name: branch checks
+on: push
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v1
+      - name: build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --all-features
+      - name: test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features
+      - name: clippy lint
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
