@@ -108,9 +108,11 @@ mod instruction_name_tests {
         if let NomErr::Error(error) = instruction_name(span).err().unwrap() {
             // assert
             assert_eq!(
-                error.message.unwrap(),
-                "Error occurred on line 1 column 5: No whitespace found after instruction!",
+                error.context.unwrap(),
+                "No whitespace found after instruction!"
             );
+            assert_eq!(error.line, 1);
+            assert_eq!(error.column, 5);
         } else {
             panic!("Expected a specific error, did not receive it!");
         }
@@ -158,13 +160,12 @@ mod instruction_name_tests {
         // act
         if let NomErr::Error(result) = instruction_name(string).err().unwrap() {
             // assert
-            let expected = format!(
-                "{} {} {}",
-                "Error occurred on line 1 column 1:",
-                "Unsupported instruction encountered,",
-                "expected one of [FROM, RUN]"
+            assert_eq!(
+                result.context.unwrap(),
+                "Unsupported instruction encountered, expected one of [FROM, RUN]"
             );
-            assert_eq!(result.message.unwrap(), expected);
+            assert_eq!(result.line, 1, "Unexpected line!");
+            assert_eq!(result.column, 1, "Unexpected column!");
         } else {
             panic!("Expected a nom error with a specific message!");
         }
