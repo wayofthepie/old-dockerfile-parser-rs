@@ -2,13 +2,15 @@ mod errors;
 use errors::*;
 use nom::branch::alt;
 use nom::bytes::complete::tag;
-use nom::character::complete::{multispace0, space1};
+use nom::character::complete::{multispace0, space0, space1};
 use nom::error::context;
 use nom::sequence::{preceded, terminated};
+
 use nom::IResult;
 use nom_locate::LocatedSpan;
 
-static NO_SPACE_AFTER_INSTRUCTION_ERROR: &str = "No whitespace found after instruction!";
+static NO_SPACE_AFTER_INSTRUCTION_ERROR: &str =
+    "No whitespace or escaped newline found after instruction!";
 
 type Span<'a> = LocatedSpan<&'a str>;
 
@@ -69,7 +71,11 @@ generate_instructions!(FROM, RUN);
 /// assert_eq!(rest.fragment().to_owned(), "alpine");
 /// ```
 pub fn instruction_name(span: Span) -> IResult<Span, &str, DockerParseError> {
-    let proceeding_space = context(NO_SPACE_AFTER_INSTRUCTION_ERROR, space1);
+    let escaped_newline = terminated(preceded(space0, tag("\\\n")), space0);
+    let proceeding_space = context(
+        NO_SPACE_AFTER_INSTRUCTION_ERROR,
+        alt((space1, escaped_newline)),
+    );
     terminated(
         preceded(multispace0, known_instructions()),
         proceeding_space,
@@ -83,6 +89,26 @@ mod instruction_name_tests {
     use nom_locate::LocatedSpan;
 
     type Span<'a> = LocatedSpan<&'a str>;
+
+    #[test]
+    fn should_fail_to_parse_known_instruction_if_proceeded_by_unescaped_newline() {
+        // arrange
+        let string = format!("{}\n", Instruction::FROM.as_str());
+        let span = Span::new(&string);
+
+        // act
+        if let NomErr::Error(error) = instruction_name(span).err().unwrap() {
+            // assert
+            assert_eq!(
+                error.context.unwrap(),
+                "No whitespace or escaped newline found after instruction!"
+            );
+            assert_eq!(error.line, 1);
+            assert_eq!(error.column, 5);
+        } else {
+            panic!("Expected a specific error, did not receive it!");
+        }
+    }
 
     #[test]
     fn should_parse_known_instruction_correctly_if_preceeded_by_any_type_of_space() {
@@ -99,6 +125,38 @@ mod instruction_name_tests {
     }
 
     #[test]
+    fn should_consume_whitespace_after_escaped_newline() {
+        // arrange
+        let string = format!("{}\\\n  ", Instruction::FROM.as_str());
+        let span = Span::new(&string);
+
+        // act
+        let result = instruction_name(span);
+
+        // assert
+        assert!(result.is_ok());
+        let tuple = result.unwrap();
+        assert!(tuple.0.fragment().is_empty());
+        assert_eq!(tuple.1, Instruction::FROM.as_str());
+    }
+
+    #[test]
+    fn should_parse_known_instruction_if_proceeded_by_escaped_newline() {
+        // arrange
+        let string = format!("{}\\\n", Instruction::FROM.as_str());
+        let span = Span::new(&string);
+
+        // act
+        let result = instruction_name(span);
+
+        // assert
+        assert!(result.is_ok());
+        let tuple = result.unwrap();
+        assert!(tuple.0.fragment().is_empty());
+        assert_eq!(tuple.1, Instruction::FROM.as_str());
+    }
+
+    #[test]
     fn should_fail_to_parse_known_instruction_if_not_proceeded_by_whitespace() {
         // arrange
         let string = format!("{}", Instruction::FROM.as_str());
@@ -109,7 +167,7 @@ mod instruction_name_tests {
             // assert
             assert_eq!(
                 error.context.unwrap(),
-                "No whitespace found after instruction!"
+                "No whitespace or escaped newline found after instruction!"
             );
             assert_eq!(error.line, 1);
             assert_eq!(error.column, 5);
