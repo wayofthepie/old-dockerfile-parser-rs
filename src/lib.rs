@@ -2,8 +2,11 @@ mod errors;
 use errors::*;
 use nom::branch::alt;
 use nom::bytes::complete::tag;
+use nom::bytes::complete::take_until;
 use nom::character::complete::{multispace0, space0, space1};
+use nom::combinator::rest;
 use nom::error::context;
+use nom::multi::fold_many0;
 use nom::sequence::{preceded, terminated};
 
 use nom::IResult;
@@ -70,6 +73,7 @@ generate_instructions!(FROM, RUN);
 /// assert_eq!(token, "FROM");
 /// assert_eq!(rest.fragment().to_owned(), "alpine");
 /// ```
+///
 pub fn instruction_name(span: Span) -> IResult<Span, &str, DockerParseError> {
     let escaped_newline = terminated(preceded(space0, tag("\\\n")), space0);
     let proceeding_space = context(
@@ -80,6 +84,70 @@ pub fn instruction_name(span: Span) -> IResult<Span, &str, DockerParseError> {
         preceded(multispace0, known_instructions()),
         proceeding_space,
     )(span)
+}
+
+/// Parse an instruction argument as a string.
+pub fn instruction_arg(span: Span) -> IResult<Span, String, DockerParseError> {
+    let (remaining, mut arg) = fold_many0(
+        alt((
+            terminated(take_until("\\"), tag("\\\n")),
+            terminated(take_until("\n"), tag("\n")),
+        )),
+        String::new(),
+        |mut acc: String, s: Span| {
+            acc.push_str(s.fragment());
+            acc
+        },
+    )(span)?;
+    let (remaining, token) = rest(remaining)?;
+    arg.push_str(token.fragment());
+    Ok((remaining, arg))
+}
+
+#[cfg(test)]
+mod instruction_arg_tests {
+    use super::instruction_arg;
+    use nom_locate::LocatedSpan;
+
+    type Span<'a> = LocatedSpan<&'a str>;
+
+    /// The main example of this is the RUN command. If you are using RUN to run
+    /// many shell commands directly in the Dockerfile you generally split it over
+    /// multiple lines with "\" and "&&". E.g.
+    ///
+    /// RUN mkdir -p /opt/test \
+    ///     && cd /opt/test
+    #[test]
+    fn should_parse_argument_with_escaped_newline_separators_as_a_single_argument() {
+        // arrange
+        let string = format!("mkdir -p /opt/test \\\n&& cd /opt/test",);
+        let span = Span::new(&string);
+
+        // act
+        let result = instruction_arg(span);
+
+        // assert
+        assert!(result.is_ok());
+        let tuple = result.unwrap();
+        assert!(tuple.0.fragment().is_empty());
+        assert_eq!(tuple.1, "mkdir -p /opt/test && cd /opt/test");
+    }
+
+    #[test]
+    fn should_parse_until_newline_consuming_newline() {
+        // arrange
+        let string = format!("alpine\n",);
+        let span = Span::new(&string);
+
+        // act
+        let result = instruction_arg(span);
+
+        // assert
+        assert!(result.is_ok());
+        let tuple = result.unwrap();
+        assert!(tuple.0.fragment().is_empty());
+        assert_eq!(tuple.1, "alpine");
+    }
 }
 
 #[cfg(test)]
