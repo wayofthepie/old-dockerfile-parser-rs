@@ -3,12 +3,11 @@ use errors::*;
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::bytes::complete::take_until;
-use nom::character::complete::{multispace0, space0, space1};
-use nom::combinator::rest;
+use nom::character::complete::{line_ending, multispace0, space0, space1};
 use nom::error::context;
 use nom::multi::fold_many0;
 use nom::sequence::{preceded, terminated};
-
+use nom::Err as NomErr;
 use nom::IResult;
 use nom_locate::LocatedSpan;
 
@@ -88,28 +87,101 @@ pub fn instruction_name(span: Span) -> IResult<Span, &str, DockerParseError> {
 
 /// Parse an instruction argument as a string.
 pub fn instruction_arg(span: Span) -> IResult<Span, String, DockerParseError> {
-    let (remaining, mut arg) = fold_many0(
-        alt((
-            terminated(take_until("\\"), tag("\\\n")),
-            terminated(take_until("\n"), tag("\n")),
-        )),
-        String::new(),
-        |mut acc: String, s: Span| {
-            acc.push_str(s.fragment());
-            acc
-        },
-    )(span)?;
-    let (remaining, token) = rest(remaining)?;
+    let arg_line = terminated(
+        terminated(take_until("\\"), tag("\\")),
+        space_to_newline_parser(
+            "Expected only spaces until a newline after a backslach character!",
+        ),
+    );
+    let (remaining, mut arg) = fold_many0(arg_line, String::new(), |mut acc: String, s: Span| {
+        acc.push_str(s.fragment());
+        acc
+    })(span)?;
+    let (remaining, token) = terminated(take_until("\n"), tag("\n"))(remaining)?;
     arg.push_str(token.fragment());
     Ok((remaining, arg))
+}
+
+/// Parses any space to a newline, will fail if it encounted any character
+/// other than a space before the newline.
+fn space_to_newline_parser<'a, 'b>(
+    err_ctx: &'static str,
+) -> impl Fn(Span<'a>) -> IResult<Span<'a>, &'a str, DockerParseError<'a>> {
+    move |span| {
+        let result: IResult<Span, Span, DockerParseError> = terminated(space0, line_ending)(span);
+        match result {
+            Ok((remaining, token)) => Ok((remaining, token.fragment().to_owned())),
+            Err(_) => Err(NomErr::Failure(DockerParseError::new(
+                span.fragment(),
+                span.location_line(),
+                span.get_column(),
+                err_ctx,
+            ))),
+        }
+    }
 }
 
 #[cfg(test)]
 mod instruction_arg_tests {
     use super::instruction_arg;
+    use nom::Err as NomErr;
     use nom_locate::LocatedSpan;
 
     type Span<'a> = LocatedSpan<&'a str>;
+
+    #[test]
+    fn should_leave_next_instruction_unconsumed_after_parsing_arg() {
+        // arrange
+        let string = format!("mkdir -p /opt/test \\\n&& cd /opt/test\nRUN another",);
+        let span = Span::new(&string);
+
+        // act
+        let result = instruction_arg(span);
+
+        // assert
+        assert!(result.is_ok());
+        let tuple = result.unwrap();
+        assert_eq!(tuple.0.fragment().to_owned(), "RUN another");
+    }
+
+    #[test]
+    fn should_error_if_any_character_except_space_is_between_a_backslash_and_newline() {
+        // arrange
+        let string = format!("mkdir -p /opt/test \\bad\n&& cd /opt/test\n",);
+        let span = Span::new(&string);
+
+        // act
+        let result = instruction_arg(span);
+
+        // assert
+        assert!(result.is_err());
+        if let NomErr::Failure(error) = instruction_arg(span).err().unwrap() {
+            // assert
+            assert_eq!(
+                error.context.unwrap(),
+                "Expected only spaces until a newline after a backslach character!"
+            );
+            assert_eq!(error.line, 1);
+            assert_eq!(error.column, 21);
+        } else {
+            panic!("Expected a specific error, did not receive it!");
+        }
+    }
+
+    #[test]
+    fn should_parse_until_newline_with_no_escape_returning_items_after_newline_as_unconsumed() {
+        let string = format!("alpine\nRUN blah",);
+        let span = Span::new(&string);
+
+        // act
+        let result = instruction_arg(span);
+
+        // assert
+        assert!(result.is_ok());
+        let tuple = result.unwrap();
+        assert_eq!(tuple.0.fragment().to_owned(), "RUN blah");
+        assert_eq!(tuple.1, "alpine");
+    }
 
     /// The main example of this is the RUN command. If you are using RUN to run
     /// many shell commands directly in the Dockerfile you generally split it over
@@ -120,7 +192,7 @@ mod instruction_arg_tests {
     #[test]
     fn should_parse_argument_with_escaped_newline_separators_as_a_single_argument() {
         // arrange
-        let string = format!("mkdir -p /opt/test \\\n&& cd /opt/test",);
+        let string = format!("mkdir -p /opt/test \\\n&& cd /opt/test\n",);
         let span = Span::new(&string);
 
         // act
@@ -143,6 +215,7 @@ mod instruction_arg_tests {
         let result = instruction_arg(span);
 
         // assert
+        println!("{:#?}", result);
         assert!(result.is_ok());
         let tuple = result.unwrap();
         assert!(tuple.0.fragment().is_empty());
