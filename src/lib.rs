@@ -130,7 +130,7 @@ mod instruction_arg_tests {
     #[test]
     fn should_leave_next_instruction_unconsumed_after_parsing_arg() {
         // arrange
-        let string = format!("mkdir -p /opt/test \\\n&& cd /opt/test\nRUN another",);
+        let string = "mkdir -p /opt/test \\\n&& cd /opt/test\nRUN another";
         let span = Span::new(&string);
 
         // act
@@ -145,7 +145,7 @@ mod instruction_arg_tests {
     #[test]
     fn should_error_if_any_character_except_space_is_between_a_backslash_and_newline() {
         // arrange
-        let string = format!("mkdir -p /opt/test \\bad\n&& cd /opt/test\n",);
+        let string = "mkdir -p /opt/test \\bad\n&& cd /opt/test\n";
         let span = Span::new(&string);
 
         // act
@@ -168,7 +168,7 @@ mod instruction_arg_tests {
 
     #[test]
     fn should_parse_until_newline_with_no_escape_returning_items_after_newline_as_unconsumed() {
-        let string = format!("alpine\nRUN blah",);
+        let string = "alpine\nRUN blah";
         let span = Span::new(&string);
 
         // act
@@ -190,7 +190,7 @@ mod instruction_arg_tests {
     #[test]
     fn should_parse_argument_with_escaped_newline_separators_as_a_single_argument() {
         // arrange
-        let string = format!("mkdir -p /opt/test \\\n&& cd /opt/test\n",);
+        let string = "mkdir -p /opt/test \\\n&& cd /opt/test\n";
         let span = Span::new(&string);
 
         // act
@@ -206,14 +206,13 @@ mod instruction_arg_tests {
     #[test]
     fn should_parse_until_newline_consuming_newline() {
         // arrange
-        let string = format!("alpine\n",);
+        let string = "alpine\n";
         let span = Span::new(&string);
 
         // act
         let result = instruction_arg(span);
 
         // assert
-        println!("{:#?}", result);
         assert!(result.is_ok());
         let tuple = result.unwrap();
         assert!(tuple.0.fragment().is_empty());
