@@ -89,9 +89,7 @@ pub fn instruction_name(span: Span) -> IResult<Span, &str, DockerParseError> {
 pub fn instruction_arg(span: Span) -> IResult<Span, String, DockerParseError> {
     let arg_line = terminated(
         terminated(take_until("\\"), tag("\\")),
-        space_to_newline_parser(
-            "Expected only spaces until a newline after a backslach character!",
-        ),
+        space_to_newline("Expected only spaces until a newline after a backslach character!"),
     );
     let (remaining, mut arg) = fold_many0(arg_line, String::new(), |mut acc: String, s: Span| {
         acc.push_str(s.fragment());
@@ -104,7 +102,7 @@ pub fn instruction_arg(span: Span) -> IResult<Span, String, DockerParseError> {
 
 /// Parses any space to a newline, will fail if it encounted any character
 /// other than a space before the newline.
-fn space_to_newline_parser<'a, 'b>(
+fn space_to_newline<'a, 'b>(
     err_ctx: &'static str,
 ) -> impl Fn(Span<'a>) -> IResult<Span<'a>, &'a str, DockerParseError<'a>> {
     move |span| {
