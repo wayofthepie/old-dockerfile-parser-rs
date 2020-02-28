@@ -4,6 +4,8 @@ use nom_locate::LocatedSpan;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
+
+
 #[derive(PartialEq, Debug)]
 pub struct DockerParseError<'a> {
     pub nom_error: VerboseError<&'a str>,
@@ -71,3 +73,4 @@ impl<'a> ParseError<LocatedSpan<&'a str>> for DockerParseError<'a> {
         )
     }
 }
+
