@@ -1,29 +1,21 @@
 use super::{
-    common::{
-        arg_token, arg_token_parser, is_not_space, optional_escaped_newline,
-        tag_maybe_with_newline, Span,
-    },
+    common::{arg_token, tag_maybe_with_internal_newlines, Span},
     instruction::Instruction,
 };
 use crate::errors::DockerParseError;
-use nom::branch::alt;
-use nom::bytes::complete::escaped;
 use nom::bytes::complete::tag;
-use nom::character::complete::{one_of, space0, space1};
+use nom::character::complete::space0;
 use nom::combinator::opt;
 use nom::error::context;
-use nom::sequence::{terminated, tuple};
+use nom::sequence::tuple;
 use nom::Err as NomErr;
 use nom::IResult;
-use std::ops::Deref;
 
 const FROM_MISSING_IMAGE_ERROR: &str = "A FROM instruction must have an image name";
 const FROM_AS_MISSING_NAME_ERROR: &str = "Expected a name after `as`";
 const FROM_PLATFORM_ARG_TAG: &str = "--platform=";
 const FROM_AS_TAG: &str = "as";
 const FROM_PLATFORM_CANNOT_BE_EMPTY_ERROR: &str = "The `--platform` argument cannot be empty";
-const FROM_PLATFORM_SPACE_ERROR: &str =
-    "The `--platform` argument and its value must be proceeded by a space";
 
 #[derive(Debug)]
 pub struct FromArgs;
@@ -37,7 +29,6 @@ impl FromArgs {
     pub(crate) fn parse<'a>(
         span: Span<'a>,
     ) -> IResult<Span<'a>, Instruction, DockerParseError<'a>> {
-        println!("INITIAL {:#?}", span);
         let (remaining, (platform, image, as_name)) = tuple((
             FromArgs::parse_platform,
             FromArgs::parse_image_name,
@@ -79,7 +70,7 @@ impl FromArgs {
     }
 
     fn parse_as_name(span: Span) -> IResult<Span, Option<String>, DockerParseError> {
-        let as_parser = tag_maybe_with_newline("as");
+        let as_parser = tag_maybe_with_internal_newlines(FROM_AS_TAG);
         if let (remaining, Some(_)) = opt(as_parser)(span)? {
             let (remaining, as_name) = context(FROM_AS_MISSING_NAME_ERROR, arg_token)(remaining)?;
             Ok((remaining, Some(as_name)))
@@ -91,15 +82,10 @@ impl FromArgs {
 
 #[cfg(test)]
 mod test {
-    use super::DockerParseError;
     use super::FromArgs;
     use crate::Instruction;
-    use nom::bytes::complete::{escaped, escaped_transform};
-    use nom::character::complete::one_of;
-    use nom::Err as NomErr;
-    use nom::IResult;
     use nom_locate::LocatedSpan;
-    use quickcheck::{quickcheck, Arbitrary, Gen, QuickCheck, TestResult};
+    use quickcheck::{quickcheck, Arbitrary, Gen};
     use rand::Rng;
 
     type Span<'a> = LocatedSpan<&'a str>;
@@ -113,6 +99,9 @@ mod test {
     #[derive(Clone, Debug)]
     struct GenPlatform(&'static str, &'static str);
 
+    #[derive(Clone, Debug)]
+    struct GenImage(String);
+
     impl Arbitrary for GenPlatform {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
             let index = g.gen_range(0, 4);
@@ -120,48 +109,58 @@ mod test {
                 ("linux/amd64 ", "linux/amd64"),
                 ("linux/arm64 ", "linux/arm64"),
                 ("windows/amd64   ", "windows/amd64"),
-                (
-                    r#"\
-windows/amd64 "#,
-                    "windows/amd64",
-                ),
+                ("\\\nwindows/amd64 ", "windows/amd64"),
             ];
             let (given, expected) = platforms[index];
             Self(given, expected)
         }
     }
 
+    impl Arbitrary for GenImage {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            let mut image = String::new();
+            while image.is_empty() {
+                image = String::arbitrary(g)
+                    .replace("\n", "\\\n")
+                    .replace("\t", "")
+                    .replace("\r", "")
+                    .replace(" ", "");
+                image.push_str("image"); // makes sure we dont end on an invalid char
+            }
+            Self(image)
+        }
+    }
+
     impl Arbitrary for GenFrom {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
-            let image;
             let mut platform = None;
             let mut as_name = None;
-            let mut from_arg = String::new();
-            let maybe_platform = Option::<GenPlatform>::arbitrary(g);
-            if let Some(gen_platform) = maybe_platform {
+            let mut arg_string_to_parse = String::new();
+
+            // platform
+            if let Some(gen_platform) = Option::<GenPlatform>::arbitrary(g) {
                 let platform_str = format!("--platform={} ", &gen_platform.0);
-                from_arg.push_str(&platform_str);
+                arg_string_to_parse.push_str(&platform_str);
                 platform = Some(gen_platform.1.to_string());
             }
-            let index = g.gen_range(0, 4);
-            let images = vec![
-                "alpine",
-                "alpine:3.11.0",
-                "test.com/docker/alpine:3.11.0",
-                "rust@sha256:af6b555730fa71a4faa1844fb98e7201d266732f39a0e5f317179c133ba94e16",
-            ];
-            from_arg.push_str(images[index]);
-            image = images[index].to_string();
+
+            // image name
+            let GenImage(image) = GenImage::arbitrary(g);
+            arg_string_to_parse.push_str(&image);
+
+            // as name
             let index = g.gen_range(0, 2);
             if index == 1 {
-                from_arg.push_str(" as something");
+                arg_string_to_parse.push_str(" as something");
                 as_name = Some("something".to_string());
             }
             Self {
-                to_parse: from_arg,
+                to_parse: arg_string_to_parse,
                 parsed: Instruction::FROM {
                     platform,
-                    image,
+                    // What we expect to be parsed needs to strip
+                    // characters we will discard during parsing
+                    image: image.replace("\\\n", "").replace("\\", ""),
                     as_name,
                 },
             }
@@ -169,7 +168,7 @@ windows/amd64 "#,
     }
 
     #[test]
-    fn should_parse_from_args_correctly() {
+    fn prop_parse_from_args_correctly() {
         fn prop(from_arg: GenFrom) -> bool {
             // act
             let result = FromArgs::parse(Span::new(&from_arg.to_parse));
@@ -201,5 +200,66 @@ windows/amd64 "#,
             true
         }
         quickcheck(prop as fn(GenFrom) -> bool);
+    }
+
+    #[test]
+    fn should_handle_escaped_newlines_in_image_name() {
+        // arrange
+        let span = Span::new("alp\\\nine");
+        let expected = Instruction::FROM {
+            platform: None,
+            image: "alpine".to_string(),
+            as_name: None,
+        };
+
+        // act
+        let result = FromArgs::parse(span);
+
+        // assert
+        assert!(result.is_ok());
+        let (remaining, instruction) = result.unwrap();
+        assert!(remaining.fragment().is_empty());
+        assert_eq!(instruction, expected);
+    }
+
+    #[test]
+    fn should_consume_backslashes_that_do_not_escape_space_or_newline() {
+        // arrange
+        let span = Span::new("alp\\\\i\\ne");
+        let expected = Instruction::FROM {
+            platform: None,
+            image: "alpine".to_string(),
+            as_name: None,
+        };
+
+        // act
+        let result = FromArgs::parse(span);
+
+        // assert
+        assert!(result.is_ok());
+        let (remaining, instruction) = result.unwrap();
+        assert!(remaining.fragment().is_empty());
+        assert_eq!(instruction, expected);
+    }
+
+    #[test]
+    fn should_allow_arguments_to_be_separated_by_escaped_newlines() {
+        // arrange
+        let span = Span::new("--platform=linux\\ \n\\\n alp\\\\i\\ne\\\n as \\\n test ");
+        let expected = Instruction::FROM {
+            platform: Some("linux".to_string()),
+            image: "alpine".to_string(),
+            as_name: Some("test".to_string()),
+        };
+
+        // act
+        let result = FromArgs::parse(span);
+
+        // assert
+        println!("{:#?}", result);
+        assert!(result.is_ok());
+        let (remaining, instruction) = result.unwrap();
+        assert!(remaining.fragment().is_empty());
+        assert_eq!(instruction, expected);
     }
 }

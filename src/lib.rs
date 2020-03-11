@@ -10,7 +10,7 @@ pub use crate::parser::instruction::{instruction, Dockerfile, Instruction};
 type Span<'a> = LocatedSpan<&'a str>;
 
 pub fn dockerfile(span: Span) -> IResult<Span, (), DockerParseError> {
-    let mut d = Dockerfile::new();
+    let _d = Dockerfile::new();
     let (_remaining, _ins) = instruction(span)?;
     Ok((span, ()))
 }

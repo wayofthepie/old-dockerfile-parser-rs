@@ -3,10 +3,9 @@ use super::from::FromArgs;
 use super::workdir::WorkdirArgs;
 use crate::errors::*;
 use nom::branch::alt;
-use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::{line_ending, multispace0, space0, space1};
+use nom::bytes::complete::tag_no_case;
+use nom::character::complete::{multispace0, space1};
 use nom::error::context;
-use nom::multi::many1;
 use nom::sequence::preceded;
 use nom::sequence::terminated;
 use nom::Err as NomErr;
@@ -87,14 +86,9 @@ pub fn instruction<'a, 'b>(span: Span<'a>) -> IResult<Span<'a>, Instruction, Doc
     }
 }
 
-fn dockerfile(span: Span) -> IResult<Span, Dockerfile, DockerParseError> {
-    let (remaining, instructions) = nom::combinator::all_consuming(many1(instruction))(span)?;
-    Ok((remaining, Dockerfile::from(instructions)))
-}
-
 #[cfg(test)]
 mod test {
-    use super::{dockerfile, instruction, Dockerfile, Instruction};
+    use super::{instruction, Instruction};
     use crate::errors::DockerParseError;
     use nom::Err as NomErr;
     use nom::IResult;
